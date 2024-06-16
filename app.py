@@ -10,20 +10,45 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
+# Adding external stylesheet for custom styling
+external_stylesheets = [
+    'https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css',
+    '/assets/styles.css'
+]
+app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 
-app = dash.Dash(__name__)
-
-app.layout = html.Div([
-    html.H1("Hulu Campaign Data Visualization"),
-    dcc.Input(id='campaign-url', type='text', placeholder='Enter Hulu campaign URL', style={'width': '50%'}),
-    html.Button('Submit', id='submit-button', n_clicks=0),
-    dcc.Loading(id='loading', children=[
-        dcc.Graph(id='campaign-graph')
-    ], type='default')
+app.layout = html.Div(children=[
+    html.Nav(className='navbar navbar-expand-lg navbar-light bg-light', children=[
+        html.A('Hulu Campaign Data Visualization', className='navbar-brand', href='#'),
+        html.Button(className='navbar-toggler', type='button', **{
+            'data-toggle': 'collapse', 'data-target': '#navbarNav', 'aria-controls': 'navbarNav', 'aria-expanded': 'false', 'aria-label': 'Toggle navigation'
+        }, children=[
+            html.Span(className='navbar-toggler-icon')
+        ])
+    ]),
+    html.Div(className='container mt-4', children=[
+        dcc.Loading(id='loading', type='default', children=[
+            html.Div(id='form-or-graph', children=[
+                html.Div(id='form-container', children=[
+                    html.H2('Enter your Hulu Credentials and Campaign URL', className='mb-4'),
+                    html.Div(className="form-group", children=[
+                        html.Label("Email:", htmlFor="email"),
+                        dcc.Input(id='email', type='email', placeholder='Enter your email', className='form-control', required=True)
+                    ]),
+                    html.Div(className="form-group", children=[
+                        html.Label("Password:", htmlFor="password"),
+                        dcc.Input(id='password', type='password', placeholder='Enter your password', className='form-control', required=True)
+                    ]),
+                    html.Div(className="form-group", children=[
+                        html.Label("Campaign URL:", htmlFor="campaign-url"),
+                        dcc.Input(id='campaign-url', type='text', placeholder='Enter Hulu campaign URL', className='form-control', required=True)
+                    ]),
+                    html.Button('Submit', id='submit-button', n_clicks=0, className='btn btn-primary btn-block'),
+                ], style={'max-width': '500px', 'margin': '0 auto', 'padding-top': '50px'})
+            ], className='graph-container')
+        ])
+    ], style={'text-align': 'center'})
 ])
 
 def extract_table_data(table):
@@ -46,8 +71,14 @@ def extract_table_data(table):
 def extract_category_names(categories):
     return [category.split('|')[-1].strip() for category in categories]
 
-def scrape_campaign_data(campaign_url):
-    driver = webdriver.Chrome()
+def scrape_campaign_data(email, password, campaign_url):
+    options = webdriver.ChromeOptions()
+    options.add_argument('--headless')  # Run Chrome in headless mode
+    options.add_argument('--disable-gpu')  # Disable GPU acceleration
+    options.add_argument('--no-sandbox')  # Bypass OS security model
+    options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+    
+    driver = webdriver.Chrome(options=options)
     fig = make_subplots(rows=2, cols=2,
                         subplot_titles=('Total Impressions Over Time', 'Impressions by Audiences', 'Impressions by Platforms', 'Impressions by Content Genres'),
                         vertical_spacing=0.3, horizontal_spacing=0.2)
@@ -56,11 +87,11 @@ def scrape_campaign_data(campaign_url):
 
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, 'email')))
         username = driver.find_element(By.NAME, 'email')
-        password = driver.find_element(By.NAME, 'password')
+        pwd = driver.find_element(By.NAME, 'password')
 
-        username.send_keys(os.getenv('USERNAME'))
-        password.send_keys(os.getenv('PASSWORD'))
-        password.send_keys(Keys.RETURN)
+        username.send_keys(email)
+        pwd.send_keys(password)
+        pwd.send_keys(Keys.RETURN)
 
         time.sleep(5)
 
@@ -97,29 +128,35 @@ def scrape_campaign_data(campaign_url):
                         fig.add_trace(go.Bar(x=df['Content Genres'], y=df['Impressions'], name='Impressions by Content Genres'), row=row, col=col)
 
         fig.update_layout(height=1050, width=1680, title_text="Hulu Campaign Data Visualization")
-        
-        # Return the figure object
-        return fig
-    
     finally:
         driver.quit()
-
-def save_html(html_content, file_path):
-    with open(file_path, 'w') as f:
-        f.write(html_content)
+    return fig
 
 @app.callback(
-    Output('campaign-graph', 'figure'),
+    Output('form-or-graph', 'children'),
     [Input('submit-button', 'n_clicks')],
-    [State('campaign-url', 'value')]
+    [State('email', 'value'), State('password', 'value'), State('campaign-url', 'value')]
 )
-def update_graph(n_clicks, campaign_url):
-    if n_clicks > 0 and campaign_url:
-        fig = scrape_campaign_data(campaign_url)
-        fig_html = fig.to_html()
-        save_html(fig_html, 'output.html')
-        return fig
-    return {}
+def update_graph(n_clicks, email, password, campaign_url):
+    if n_clicks > 0 and email and password and campaign_url:
+        return dcc.Loading(type='default', children=dcc.Graph(figure=scrape_campaign_data(email, password, campaign_url)))
+    return html.Div(id='form-container', children=[
+        html.H2('Enter your Hulu Credentials and Campaign URL', className='mb-4'),
+        html.Div(className="form-group", children=[
+            html.Label("Email:", htmlFor="email"),
+            dcc.Input(id='email', type='email', placeholder='Enter your email', className='form-control', required=True)
+        ]),
+        html.Div(className="form-group", children=[
+            html.Label("Password:", htmlFor="password"),
+            dcc.Input(id='password', type='password', placeholder='Enter your password', className='form-control', required=True)
+        ]),
+        html.Div(className="form-group", children=[
+            html.Label("Campaign URL:", htmlFor="campaign-url"),
+            dcc.Input(id='campaign-url', type='text', placeholder='Enter Hulu campaign URL', className='form-control', required=True)
+        ]),
+        html.Button('Submit', id='submit-button', n_clicks=0, className='btn btn-primary btn-block'),
+    ], style={'max-width': '500px', 'margin': '0 auto', 'padding-top': '50px'})
+
 
 if __name__ == '__main__':
     app.run_server(debug=True)
