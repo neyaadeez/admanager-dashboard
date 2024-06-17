@@ -4,16 +4,11 @@ from dash.dependencies import Input, Output, State
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import time
+from google_analytics import fetch_google_analytics_data
+from hulu import scrape_campaign_data
+from datetime import datetime, timedelta
 
-# Adding external stylesheet for custom styling
-external_stylesheets = ['https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css']
+external_stylesheets = ['https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css', '/assets/styles.css']
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 app.config.suppress_callback_exceptions = True
 
@@ -29,9 +24,32 @@ app.layout = html.Div(children=[
         ])
     ]),
     html.Div(className='container mt-4', children=[
-        dcc.Loading(id="loading-icon", children=[
-            html.Div(id='form-or-graph', children=[
-                html.Div(id='form-container', children=[
+        html.Div(id='main-content', children=[
+            html.Button('Google Analytics Data Visualization', id='google-button', n_clicks=0, className='btn btn-primary m-2'),
+            html.Button('Hulu Campaign Data Visualization', id='hulu-button', n_clicks=0, className='btn btn-primary m-2')
+        ])
+    ])
+])
+
+@app.callback(
+    Output('main-content', 'children'),
+    [Input('google-button', 'n_clicks'),
+     Input('hulu-button', 'n_clicks')]
+)
+def display_page(google_clicks, hulu_clicks):
+    if google_clicks > 0:
+        return html.Div([
+            dcc.Loading(id='loading', children=[
+                html.Div(id='form-or-dashboard', children=[
+                    html.Button('Google Analytics Data Visualization', id='load-data-button', n_clicks=0, className='btn btn-primary')
+                ]),
+                html.Div(id='graph-container', style={'display': 'none'})
+            ], type='default')
+        ])
+    elif hulu_clicks > 0:
+          return html.Div([
+            dcc.Loading(id='loading', children=[
+                html.Div(id='form-or-graph', children=[
                     html.H2('Enter your Hulu Credentials and Campaign URL', className='mb-4'),
                     html.Div(className="form-group", children=[
                         html.Label("Email:", htmlFor="email"),
@@ -46,123 +64,67 @@ app.layout = html.Div(children=[
                         dcc.Input(id='campaign-url', type='text', placeholder='Enter Hulu campaign URL', className='form-control', required=True)
                     ]),
                     html.Button('Submit', id='submit-button', n_clicks=0, className='btn btn-primary btn-block'),
-                ])
-            ])
-        ], type='default')
+                ], style={'max-width': '500px', 'margin': '0 auto', 'padding-top': '50px'})
+            ], type='default')
+        ])
+    return html.Div([
+        html.Button('Google Analytics Data Visualization', id='google-button', n_clicks=0, className='btn btn-primary m-2'),
+        html.Button('Hulu Campaign Data Visualization', id='hulu-button', n_clicks=0, className='btn btn-primary m-2')
     ])
-])
 
-def extract_table_data(table):
-    headers = table.find_elements(By.TAG_NAME, 'th')
-    headers = [header.text for header in headers]
-
-    rows = table.find_elements(By.TAG_NAME, 'tr')
-    data = []
-    for row in rows:
-        cols = row.find_elements(By.TAG_NAME, 'td')
-        cols = [col.text for col in cols]
-        if cols:
-            data.append(cols)
-
-    if headers and data:
-        return pd.DataFrame(data, columns=headers)
-    else:
-        return pd.DataFrame()
-
-def extract_category_names(categories):
-    return [category.split('|')[-1].strip() for category in categories]
-
-def scrape_campaign_data(email, password, campaign_url):
-    options = webdriver.FirefoxOptions()
-    options.add_argument('--headless')  # Run Firefox in headless mode
-    options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    
-    driver = webdriver.Firefox(options=options)
-    graphs = []
-    try:
-        driver.get('https://admanager.hulu.com/login')
-
-        try:
-            WebDriverWait(driver, 100).until(EC.presence_of_element_located((By.NAME, 'email')))
-        except TimeoutException:
-            return "Error: Login page took too long to load."
+@app.callback(
+    [Output('form-or-dashboard', 'style'),
+     Output('graph-container', 'style'),
+     Output('graph-container', 'children')],
+    [Input('load-data-button', 'n_clicks')]
+)
+def update_google_graph(n_clicks):
+    if n_clicks > 0:
+        df = fetch_google_analytics_data()
         
-        username = driver.find_element(By.NAME, 'email')
-        pwd = driver.find_element(By.NAME, 'password')
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+            end_date = df['date'].max()
+            start_date = end_date - timedelta(days=30)
+            df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
 
-        username.send_keys(email)
-        pwd.send_keys(password)
-        pwd.send_keys(Keys.RETURN)
+            df['newUsers'] = pd.to_numeric(df['newUsers'])
+            df['activeUsers'] = pd.to_numeric(df['activeUsers'])
+            df['eventCount'] = pd.to_numeric(df['eventCount'])
+            df['totalUsers'] = pd.to_numeric(df['totalUsers'])
+            df['sessions'] = pd.to_numeric(df['sessions'])
 
-        time.sleep(5)
+            df = df.sort_values(by='date')
 
-        driver.get(campaign_url)
+            fig = make_subplots(rows=5, cols=1, 
+                                subplot_titles=('New Users', 'Returning Users', 'Key Events', 'Users', 'Sessions'),
+                                vertical_spacing=0.1)
 
-        time.sleep(5)
+            fig.add_trace(go.Scatter(x=df['date'], y=df['newUsers'], mode='lines+markers', name='New Users'), row=1, col=1)
+            fig.update_yaxes(title_text='New Users', row=1, col=1, range=[0, df['newUsers'].max() + 5])
 
-        try:
-            tables = WebDriverWait(driver, 100).until(
-                EC.presence_of_all_elements_located((By.TAG_NAME, 'table'))
-            )
-        except TimeoutException:
-            return "Error: Campaign data page took too long to load."
+            fig.add_trace(go.Scatter(x=df['date'], y=df['activeUsers'], mode='lines+markers', name='Returning Users'), row=2, col=1)
+            fig.update_yaxes(title_text='Returning Users', row=2, col=1, range=[0, df['activeUsers'].max() + 5])
 
-        fig = make_subplots(rows=4, cols=1, 
-                            subplot_titles=('Total Impressions Over Time', 'Impressions by Audiences', 'Impressions by Platforms', 'Impressions by Content Genres'),
-                            vertical_spacing=0.1)
+            fig.add_trace(go.Scatter(x=df['date'], y=df['eventCount'], mode='lines+markers', name='Key Events'), row=3, col=1)
+            fig.update_yaxes(title_text='Key Events', row=3, col=1, range=[0, df['eventCount'].max() + 5])
 
-        if len(tables) > 0:
-            df = extract_table_data(tables[0])
-            if not df.empty:
-                df['Total Impressions'] = df['Total Impressions'].str.replace(' impressions', '').str.replace(',', '').astype(int)
-                if 'Days' in df.columns:
-                    df['Start Date'] = df['Days'].str.split(' - ').str[0]
-                    df['Start Date'] = pd.to_datetime(df['Start Date'], format='%a, %m/%d/%y')
-                    fig.add_trace(go.Scatter(x=df['Start Date'], y=df['Total Impressions'], mode='lines+markers', name='Total Impressions'), row=1, col=1)
-                    fig.update_yaxes(title_text='Total Impressions', row=1, col=1)
+            fig.add_trace(go.Scatter(x=df['date'], y=df['totalUsers'], mode='lines+markers', name='Users'), row=4, col=1)
+            fig.update_yaxes(title_text='Users', row=4, col=1, range=[0, df['totalUsers'].max() + 5])
 
-        if len(tables) > 3:
-            df = extract_table_data(tables[3])
-            if not df.empty:
-                df['Audiences'] = extract_category_names(df['Audiences'])
-                df['Impressions'] = df['Impressions'].str.replace(' impressions', '').str.replace(',', '').astype(int)
-                fig.add_trace(go.Bar(x=df['Impressions'], y=df['Audiences'], orientation='h', name='Impressions by Audiences'), row=2, col=1)
-                fig.update_yaxes(title_text='Audiences', row=2, col=1)
+            fig.add_trace(go.Scatter(x=df['date'], y=df['sessions'], mode='lines+markers', name='Sessions'), row=5, col=1)
+            fig.update_yaxes(title_text='Sessions', row=5, col=1, range=[0, df['sessions'].max() + 5])
 
-        if len(tables) > 4:
-            df = extract_table_data(tables[4])
-            if not df.empty:
-                df['Impressions'] = df['Impressions'].str.replace(' impressions', '').str.replace(',', '').astype(int)
-                fig.add_trace(go.Bar(x=df['Platforms'], y=df['Impressions'], name='Impressions by Platforms'), row=3, col=1)
-                fig.update_yaxes(title_text='Impressions', row=3, col=1)
-
-        if len(tables) > 5:
-            df = extract_table_data(tables[5])
-            if not df.empty:
-                df['Impressions'] = df['Impressions'].apply(lambda x: int(x.replace(' impressions', '').replace(',', '')) if x.replace(' impressions', '').replace(',', '').isdigit() else 0)
-                fig.add_trace(go.Bar(x=df['Content Genres'], y=df['Impressions'], name='Impressions by Content Genres'), row=4, col=1)
-                fig.update_yaxes(title_text='Impressions', row=4, col=1)
-
-        fig.update_layout(height=1500, width=1200, title_text="Hulu Campaign Data Visualization")
-        graphs.append(dcc.Graph(figure=fig))
-
-    except NoSuchElementException as e:
-        return f"Error: Unable to locate an element. Details: {e}"
-    except Exception as e:
-        return f"An error occurred: {e}"
-    finally:
-        driver.quit()
-    return graphs
+            fig.update_layout(height=1500, width=1200, title_text="Google Analytics Data")
+            return {'display': 'none'}, {'display': 'block'}, dcc.Graph(figure=fig)
+    return {'textAlign': 'center', 'paddingTop': '20%'}, {'display': 'none'}, None
 
 @app.callback(
     Output('form-or-graph', 'children'),
     [Input('submit-button', 'n_clicks')],
     [State('email', 'value'), State('password', 'value'), State('campaign-url', 'value')]
 )
-def update_graph(n_clicks, email, password, campaign_url):
+def update_hulu_graph(n_clicks, email, password, campaign_url):
     if n_clicks > 0 and email and password and campaign_url:
         graphs = scrape_campaign_data(email, password, campaign_url)
         return graphs
@@ -182,7 +144,6 @@ def update_graph(n_clicks, email, password, campaign_url):
         ]),
         html.Button('Submit', id='submit-button', n_clicks=0, className='btn btn-primary btn-block'),
     ], style={'max-width': '500px', 'margin': '0 auto', 'padding-top': '50px'})
-
 
 if __name__ == '__main__':
     app.run_server(debug=True, host="0.0.0.0", port="8050")
