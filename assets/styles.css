@@ -1,0 +1,21 @@
+#form-or-graph {
+    display: flex;
+    justify-content: center;
+}
+
+.graph-container {
+    margin-left: 0px;
+    padding-left: 0px;
+    max-width: 1680px;
+}
+
+#logo {
+    max-width: 150px;
+    height: auto;
+}
+
+.navbar {
+    background: linear-gradient(135deg, #a1c4fd, #c2e9fb);
+}
+
+
